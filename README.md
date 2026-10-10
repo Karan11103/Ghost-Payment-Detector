@@ -1,221 +1,212 @@
 # 👻 Ghost Payment Detector
 
-> **Razorpay AI Buildathon — Track 01 (Agentic Commerce) / Track 03 (Revenue Recovery)**  
-> *An autonomous reconciliation agent that detects and safely auto-corrects "ghost payments" (paid in Razorpay but marked pending in merchant DB due to webhook delivery failure) using deterministic, gated logic, and uses an isolated LLM solely to explain incidents in human language — never to move money.*
+<p align="center">
+  <strong>Detect missing payment events. Reconcile order states. Recover safely.</strong>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-FastAPI-3776AB?logo=python&logoColor=white" alt="Python and FastAPI">
+  <img src="https://img.shields.io/badge/React-Frontend-61DAFB?logo=react&logoColor=20232A" alt="React">
+  <img src="https://img.shields.io/badge/SQLite-Database-003B57?logo=sqlite&logoColor=white" alt="SQLite">
+  <img src="https://img.shields.io/badge/AI-Explainable%20assistance-8B5CF6" alt="AI-assisted explanations">
+  <img src="https://img.shields.io/badge/Project-Personal%20Build-111827" alt="Personal project">
+</p>
+
+**Ghost Payment Detector** is an independent personal project exploring a common reliability issue in online payments: a payment succeeds, but the merchant's application misses the event that should update the order. The customer may have paid while the order remains stuck in a pending state.
+
+The project simulates webhook failures, reconciles local order records with payment status, applies strict checks before changing an order, and records decisions for review. An optional AI explainer turns technical incidents into readable summaries; it does **not** decide whether a payment succeeded or authorize financial state changes.
 
 ---
 
-## 🎯 1. Executive Pitch & The Problem
+## ✨ Why this project?
 
-In high-volume e-commerce and fintech platforms, **webhook delivery failure** is a persistent, costly failure mode:
-1. A customer authorizes payment on Razorpay.
-2. The payment captures successfully on the gateway (`status: captured`).
-3. Due to transient network drops, timeout spikes, or server restarts, the webhook never reaches the merchant server.
-4. The merchant database leaves the order stuck in `pending` ("Ghost Payment").
-5. The merchant's order management wrongly refuses fulfillment, triggering customer complaints, chargebacks, and lost trust.
+Online payment workflows often rely on asynchronous webhooks. Network interruptions, server restarts, or delayed delivery can leave the payment service and merchant application showing different states.
 
-**Ghost Payment Detector** continuously reconciles merchant order state against Razorpay gateway truth, auto-corrects ghost payments within seconds via a **deterministic, 5-rule gate function**, and leverages an **isolated LLM explainer** downstream strictly to generate engineering summaries and customer-facing updates.
+**Example:** A customer completes checkout. The payment is captured, but the webhook never reaches the merchant server. The order remains pending, potentially delaying fulfillment and confusing the customer.
 
----
+Ghost Payment Detector explores how to identify and resolve this mismatch without blindly trusting an event, an AI-generated answer, or an unverified status.
 
-## 🏛️ 2. Architectural Blueprint & AI Judgment Boundary
+## 🚀 Key features
 
-![Enterprise System Architecture Blueprint](docs/architecture.png)
+| Feature | What it does |
+| --- | --- |
+| **Payment reconciliation** | Finds orders that remain pending and compares their state with the payment status source. |
+| **Deterministic safety gate** | Checks whether an order is eligible for a correction before changing its state. |
+| **Idempotency protection** | Prevents the same order from being corrected repeatedly. |
+| **Webhook failure simulation** | Simulates dropped, delayed, or corrupted events to test failure scenarios. |
+| **Human escalation queue** | Sends ambiguous cases—such as amount mismatches or invalid signatures—for review. |
+| **Audit trail** | Records reconciliation decisions and correction outcomes for investigation. |
+| **AI incident explainer** | Produces plain-language summaries and draft messages after the decision is made. |
+| **Monitoring dashboard** | Displays payment states, recovery activity, audit events, and escalations. |
+| **Automated tests** | Covers safety-gate decisions, failure simulations, API behavior, and incident explanations. |
 
-```
-┌─────────────────┐      ┌──────────────────────┐      ┌────────────────────┐
-│  Checkout Sim    │─────▶│  Razorpay Test API    │      │  Merchant Order DB  │
-│  (creates orders)│      │  (real test-mode / SDK)│     │  (source of truth   │
-└─────────────────┘      └──────────┬────────────┘      │   for order state)  │
-                                     │                    └─────────┬──────────┘
-                          ┌──────────▼────────────┐                 │
-                          │ Chaos Webhook Relay    │                 │
-                          │ (drops/delays/corrupts │                 │
-                          │  X% of webhooks)       │                 │
-                          └──────────┬────────────┘                 │
-                                     │ (delivered webhooks)          │
-                                     ▼                                │
-                          ┌────────────────────────┐                 │
-                          │  Webhook Handler        │────────────────┘
-                          │  (updates order state)  │
-                          └────────────────────────┘
+## 🛡️ Safety by design
 
-                          ┌────────────────────────────────────────┐
-                          │        Reconciliation Poller (cron)      │
-                          │  1. Fetch orders in "pending" > N sec   │
-                          │  2. Call Razorpay Payment Status API     │
-                          │  3. Compare: gateway truth vs order DB   │
-                          └──────────────┬───────────────────────────┘
-                                         ▼
-                          ┌────────────────────────────────────────┐
-                          │    Deterministic Gate (5 Strict Rules) │
-                          │  - 1. Idempotency guard (unique DB key) │
-                          │  - 2. Gateway status == "captured"      │
-                          │  - 3. Signature valid & amount parity   │
-                          │  - 4. Never touch refund/dispute states │
-                          │  - 5. Safe, bounded auto-correction     │
-                          └──────────────┬───────────────────────────┘
-                             allowed │         │ blocked
-                                     ▼         ▼
-                     ┌───────────────────┐  ┌────────────────────┐
-                     │ Auto-correct order │  │ Escalate to human   │
-                     │ state + log audit  │  │ queue + log reason  │
-                     └─────────┬─────────┘  └─────────┬──────────┘
-                               ▼                       ▼
-                     ┌─────────────────────────────────────────┐
-                     │   Isolated AI Explainer (Post-Decision) │
-                     │  - Input: structured event JSON          │
-                     │  - Output: plain-language summary & draft│
-                     │  - GUARANTEE: NEVER touches DB / money   │
-                     └──────────────────┬──────────────────────┘
-                                        ▼
-                     ┌─────────────────────────────────────────┐
-                     │         Reactive UI Dashboard           │
-                     │  - Live auto-updating reconciliation stream│
-                     │  - ₹ recovered & latency stat metrics   │
-                     │  - Filterable audit trail + CSV export  │
-                     │  - Simulation chaos control panel       │
-                     └─────────────────────────────────────────┘
+The core principle is simple: **AI can explain a financial incident, but deterministic application logic controls payment-state changes.**
+
+A correction should only be considered when the available evidence is consistent and the required checks pass:
+
+1. **Idempotency:** Has this order already been corrected?
+2. **Payment status:** Does the payment source confirm a successful capture?
+3. **Integrity:** Is the response verified, and does the amount match?
+4. **Order state:** Is the order in a state that is safe to change?
+5. **Decision:** Correct only when all required checks pass; otherwise escalate for human review.
+
+The AI explainer runs after the decision and is not the authority for payment status. This separation reduces the risk of an LLM hallucination causing an unsafe financial action.
+
+> This is a personal engineering project and simulation. Do not use it to process real payments or update production financial records without a security review, provider-specific verification, authorization controls, and operational testing.
+
+## 🧭 How it works
+
+```mermaid
+flowchart TD
+    A[Checkout / Payment Event] --> B[Webhook Handler]
+    B --> C[Merchant Order Database]
+    A --> D[Payment Status Source]
+    E[Reconciliation Poller] --> C
+    E --> D
+    C --> F[Deterministic Safety Gate]
+    D --> F
+    F -->|Checks pass| G[Correct Order State]
+    F -->|Ambiguous or unsafe| H[Human Review Queue]
+    G --> I[Audit Trail]
+    H --> I
+    I --> J[AI Incident Explainer]
+    I --> K[Monitoring Dashboard]
+    J --> K
 ```
 
-### 🛡️ Explicit AI Judgment Statement
-> **In fintech infrastructure, non-deterministic language models must NEVER decide financial state transitions or move money.**  
-> In Ghost Payment Detector, **100% of money-affecting decisions are executed by a deterministic mathematical gate function** that strictly validates gateway ground truth, cryptographic signatures, and amount parity. The LLM (`explainer.py`) is invoked asynchronously **after** the gate has decided. It has zero database write privileges, zero financial state authority, and acts strictly as a communication layer to translate machine state into engineering summaries and empathetic customer drafts.
+### Typical incident lifecycle
 
----
+1. A payment is captured, but its webhook is dropped or delayed.
+2. The order remains pending beyond the configured threshold.
+3. The reconciliation poller checks the payment status.
+4. The safety gate compares status, amount, integrity checks, and current order state.
+5. The system either corrects the order or sends the case for human review.
+6. The decision is recorded, and the explainer can summarize what happened.
 
-## ⚡ 3. Time & Space Complexity Proof
+## 🏗️ Architecture and tech stack
 
-| Component | Target Complexity | Concrete Implementation |
-|---|---|---|
-| **Order Lookup for Poller** | $\mathcal{O}(1)$ avg seek | SQLite B-Tree compound index on `(status, created_at)` and primary key on `id`. Eliminates linear table scans. |
-| **Batch Reconciliation Poll** | $\mathcal{O}(N)$ time, $\mathcal{O}(1)$ RAM | Stream-processed using cursor-based pagination (`limit/offset`); avoids loading large batches into application memory. |
-| **Reconciliation Gate Function** | $\mathcal{O}(1)$ time | 5 sequential, deterministic checks with immediate early returns; zero iteration over historical transactions. |
-| **Idempotency Guard** | $\mathcal{O}(1)$ avg | Unique primary key constraint on `corrections(order_id)`. Prevents double-correction without scanning the audit log. |
-| **Audit Log Write** | $\mathcal{O}(1)$ append | Append-only SQLite table with autoincrement ID; records are never modified or deleted. |
-| **Dashboard Aggregations** | $\mathcal{O}(\log N)$ | Executed directly within the SQL query engine using indexed `COUNT` and `SUM` queries rather than in-memory filtering. |
-| **LLM Explainer Call** | $\mathcal{O}(1)$ per event | Post-decision asynchronous invocation with schema validation retry and fallback template. |
+- **Backend:** Python, FastAPI, Pydantic
+- **Frontend:** React, Vite, Tailwind CSS
+- **Database:** SQLite
+- **AI explanations:** LLM integration with structured-output handling and fallback explanations
+- **Background processing:** Reconciliation poller
+- **Reliability testing:** Pytest and simulated webhook failures
 
----
+### Repository layout
 
-## 🧪 4. Deterministic Gate Function Pseudocode
-
-```python
-def reconciliation_gate(order, gateway_status, gateway_signature_valid, gateway_amount):
-    # 1. Idempotency — never correct twice
-    if already_corrected(order.id):
-        return Decision(allowed=False, reason="Already corrected — idempotency guard")
-
-    # 2. Only act on unambiguous success signal
-    if gateway_status != "captured":
-        return Decision(allowed=False, reason=f"Gateway status is {gateway_status}, not captured — no action")
-
-    # 3. Signature/amount integrity check — never trust an unverified payload
-    if not gateway_signature_valid:
-        return Decision(allowed=False, reason="Signature verification failed — escalate, do not auto-correct")
-
-    if gateway_amount != order.amount:
-        return Decision(allowed=False, reason="Amount mismatch — escalate, possible fraud/error")
-
-    # 4. Never touch orders already in a terminal dispute/refund state
-    if order.status in ("refunded", "disputed", "charged_back"):
-        return Decision(allowed=False, reason=f"Order in terminal state {order.status} — escalate")
-
-    # 5. All checks passed — safe, bounded correction
-    return Decision(allowed=True, reason="Gateway confirms captured, signature valid, amount matches, no dispute")
+```text
+.
+├── backend/
+│   ├── app/
+│   │   ├── api/          # Dashboard, webhook, audit, simulation, escalations
+│   │   ├── gate.py       # Deterministic correction checks
+│   │   ├── poller.py     # Reconciliation worker
+│   │   ├── chaos.py      # Webhook failure simulation
+│   │   ├── explainer.py  # AI-assisted incident summaries
+│   │   ├── models.py     # Data models
+│   │   └── database.py   # Database setup
+│   └── tests/            # API, gate, chaos, and explainer tests
+├── frontend/
+│   └── src/
+│       ├── App.jsx
+│       └── components/   # Dashboard, audit, simulation, escalation UI
+├── docs/
+│   └── architecture.png
+├── .env.example
+└── start.sh
 ```
 
----
-
-## 🌙 5. "What Broke at 2am" (Real Engineering Learnings)
-
-Building automated reconciliation under chaos injection revealed several real engineering gotchas:
-
-1. **Chaos Probability Drift in Unit Tests**:
-   - *Problem*: An initial statistical test checking 1000 chaos runs with a 30% drop rate failed intermittently due to standard random variance ($3\sigma \approx 4.3\%$).
-   - *Fix*: Increased iterations to 2000 and configured statistical tolerance to $4.5\%$ based on binomial standard error ($\sqrt{\frac{p(1-p)}{N}}$), ensuring deterministic CI test runs.
-
-2. **SQLite Concurrent Write Lock Contention**:
-   - *Problem*: When the background poller attempted to update orders while the incoming webhook receiver was logging events, SQLite threw `database is locked` under default rollback journal mode.
-   - *Fix*: Configured SQLite in **Write-Ahead Logging (WAL) mode** (`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;`), allowing concurrent read access alongside active writes.
-
-3. **Pydantic V2 Model Migration & Deprecation**:
-   - *Problem*: Using legacy `class Config: from_attributes = True` triggered deprecation warnings across FastAPI response serialization.
-   - *Fix*: Modernized schemas to `model_config = ConfigDict(from_attributes=True)` and cleaned import definitions.
-
-4. **Zero-Downtime Gateway Harness (Live Pitch Safety)**:
-   - *Problem*: Real payment gateways in test mode can hit rate limits or require live outbound internet access during hackathon pitches.
-   - *Fix*: Built a dual-mode Razorpay client that interfaces with the real Razorpay SDK when keys are present, but transparently falls back to a simulated gateway harness if offline or using demo keys.
-
-5. **LLM Explainer Schema Resilience**:
-   - *Problem*: LLMs can occasionally return markdown code blocks (e.g. ````json ... ````) instead of pure JSON, causing parser crashes.
-   - *Fix*: Implemented a 2-tier resilience layer: code fence stripper + strict retry prompt + deterministic fallback templates guaranteeing the reconciliation pipeline **never crashes** on LLM formatting issues.
-
----
-
-## 🚀 6. Getting Started & Local Setup
+## 🖥️ Run locally
 
 ### Prerequisites
-- Python 3.9+
-- Node.js 18+ and npm
 
-### Environment Variables
-Copy `.env.example` to `.env`:
-```bash
-cp .env.example .env
-```
+- Python 3.9 or later
+- Node.js 18 or later with npm
+- Git
 
-Configurable variables in `.env`:
-```ini
-RAZORPAY_KEY_ID=rzp_test_your_key_here
-RAZORPAY_KEY_SECRET=your_secret_here
-GROK_API_KEY=your_grok_api_key_here
-GROK_MODEL=grok-2-latest
-DATABASE_URL=sqlite:///./ghost_payments.db
-DEFAULT_DROP_RATE=0.40
-DEFAULT_DELAY_RATE=0.20
-DEFAULT_CORRUPT_RATE=0.10
-RECONCILIATION_CUTOFF_SECONDS=10
-POLLER_INTERVAL_SECONDS=30
-```
+### 1. Get the project
 
-### One-Click Start
-Run the unified start script from the project root:
-```bash
-./start.sh
-```
-This automatically launches:
-- **FastAPI Backend**: `http://localhost:8000` (Interactive Docs: `http://localhost:8000/docs`)
-- **React Frontend**: `http://localhost:5173`
+Open this repository on GitHub and use **Code → Clone** or download the source as a ZIP file. Then open a terminal in the project folder.
 
----
+### 2. Configure environment variables
 
-## 🧪 7. Running Tests
+Create your local environment file from the example:
 
-Run the backend test suite with Pytest:
-```bash
-cd backend
-PYTHONPATH=. ./venv/bin/pytest -v tests/
-```
-All 11 tests validate:
-- Gate branch 1: Idempotency guard (double-correction blocked)
-- Gate branch 2: Gateway status mismatch
-- Gate branch 3a: Cryptographic signature failure
-- Gate branch 3b: Amount mismatch
-- Gate branch 4: Terminal status guard (refunded/disputed)
-- Gate branch 5: Happy path auto-correction
-- Chaos probability distribution test (2000 runs)
-- Full end-to-end ghost payment simulation & reconciliation
-- Escalation flow & human review resolution
+    cp .env.example .env
 
----
+Open the new .env file and configure the sandbox payment credentials and optional AI provider key expected by the application. Keep real secrets out of Git. The project supports local simulation when enabled by its configuration.
 
-## 🎥 8. Pitch Video Demo Guide (5 Minutes)
+### 3. Start the application
 
-| Timestamp | Screen / Action | Talking Point |
-|---|---|---|
-| **0:00 – 0:30** | Dashboard Landing Page | **The Problem**: "A customer pays, Razorpay captures it, but a webhook drops. The merchant DB leaves it as pending. This is a ghost payment." |
-| **0:30 – 2:00** | Simulation Controls | **Live Chaos Demo**: Set Drop Rate to 100%. Click *"Trigger Ghost Payment Scenario"*. Show order created as pending, webhook dropped, and poller immediately auto-correcting it with the live feed updating in real time. |
-| **2:00 – 3:30** | Architecture & Gate Code | **The AI Boundary**: Explain the 5 deterministic gate rules on screen. Highlight that the LLM is strictly isolated downstream and never decides financial state. |
-| **3:30 – 4:30** | Audit Trail & Escalations | **Enterprise Compliance**: Demonstrate the append-only audit trail, filter by actor, download CSV export, and inspect the human escalation queue. |
-| **4:30 – 5:00** | Complexity & "What Broke at 2am" | **Engineering Rigor**: Cite O(1) idempotency via unique constraints, SQLite WAL mode, and LLM JSON fallback resilience. |
+From the project root, run:
+
+    chmod +x start.sh
+    ./start.sh
+
+The start script is configured to launch the services locally. Once startup completes, open:
+
+- **Frontend:** http://localhost:5173
+- **Backend API:** http://localhost:8000
+- **Interactive API docs:** http://localhost:8000/docs
+
+If you prefer to run the services separately, follow the scripts and dependencies in the backend and frontend folders.
+
+## 🧪 Run the tests
+
+Create and activate a Python virtual environment:
+
+    cd backend
+    python -m venv .venv
+
+**macOS / Linux**
+
+    source .venv/bin/activate
+
+**Windows PowerShell**
+
+    .venv\Scripts\Activate.ps1
+
+Install dependencies and run the tests:
+
+    pip install -r requirements.txt
+    PYTHONPATH=. pytest -v tests/
+
+The test suite includes scenarios for idempotency, unsuccessful payment states, invalid signatures, amount mismatches, safe correction, webhook chaos, escalation, API behavior, and AI explanation handling.
+
+## 🔍 What this project explores
+
+- Designing safe state transitions for money-related workflows
+- Handling asynchronous events and webhook delivery failures
+- Building idempotent recovery operations
+- Separating deterministic business rules from LLM-generated explanations
+- Testing failure scenarios instead of only the happy path
+- Creating audit trails and human-review workflows
+- Connecting a Python API to a React monitoring interface
+
+## 🗺️ Potential next steps
+
+- Add a recorded demo and screenshots of the current dashboard.
+- Add continuous integration to run backend tests on every pull request.
+- Add stronger authentication, role-based access, and audit-log integrity checks.
+- Expand observability for reconciliation latency and escalation reasons.
+- Document the payment adapter interface and add integration tests for sandbox providers.
+- Add end-to-end tests that verify the UI and backend together.
+
+## 🔐 Security
+
+- Never commit API keys, secrets, real customer data, or production payment records.
+- Use sandbox credentials and synthetic data for testing.
+- Verify signatures and amounts on the server; never trust client-provided payment status.
+- Require authorization for administrative actions and protect public API endpoints.
+- Keep the AI explainer separate from payment-state mutation logic.
+- Rotate any secret that has accidentally been committed and review Git history if it was exposed.
+
+## 👤 About
+
+Ghost Payment Detector is an independently developed personal project by **Karan K**, exploring payment reliability, event-driven backend systems, safe automation, and AI-assisted incident analysis.
+
+## 📄 License
+
+No open-source license is currently specified. Unless a license is added, all rights are reserved by the author.
